@@ -1,4 +1,6 @@
 import os
+import platform
+import traceback
 import streamlit as st
 from PIL import Image
 from PyPDF2 import PdfReader
@@ -7,86 +9,103 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.llms import OpenAI
 from langchain.chains.question_answering import load_qa_chain
-import platform
 
-# App title and presentation
-st.title('Generación Aumentada por Recuperación (RAG) 💬')
-st.write("Versión de Python:", platform.python_version())
+# --- CONFIGURACIÓN DE LA PÁGINA ---
+st.set_page_config(
+    page_title="Asistente Inteligente de PDFs",
+    page_icon="📚",
+    layout="centered"
+)
 
-# Load and display image
+# --- ENCABEZADO PRINCIPAL ---
+st.title("📚 Asistente Inteligente de PDFs")
+st.caption("Versión de Python: " + platform.python_version())
+st.write(
+    "Esta aplicación utiliza **Generación Aumentada por Recuperación (RAG)** para responder preguntas "
+    "sobre el contenido de un documento PDF. Solo necesitas subir un archivo y escribir tus preguntas."
+)
+
+# --- IMAGEN DECORATIVA ---
 try:
-    image = Image.open('Chat_pdf.png')
-    st.image(image, width=350)
-except Exception as e:
-    st.warning(f"No se pudo cargar la imagen: {e}")
+    image = Image.open("Chat_pdf.png")
+    st.image(image, width=350, caption="Tu asistente para analizar documentos PDF 📄")
+except Exception:
+    st.warning("⚠️ No se pudo cargar la imagen decorativa.")
 
-# Sidebar information
+# --- SIDEBAR ---
 with st.sidebar:
-    st.subheader("Este Agente te ayudará a realizar análisis sobre el PDF cargado")
+    st.header("ℹ️ Sobre esta aplicación")
+    st.write(
+        "El modelo utiliza **OpenAI GPT-4o** junto con técnicas de búsqueda semántica. "
+        "Esto permite generar respuestas precisas basadas en el contenido de tu documento."
+    )
+    st.divider()
+    st.write("🔒 Tus datos no se almacenan. Todo el análisis ocurre localmente durante la sesión.")
 
-# Get API key from user
-ke = st.text_input('Ingresa tu Clave de OpenAI', type="password")
+# --- API KEY ---
+ke = st.text_input("🔑 Ingresa tu clave de OpenAI:", type="password")
 if ke:
-    os.environ['OPENAI_API_KEY'] = ke
+    os.environ["OPENAI_API_KEY"] = ke
 else:
-    st.warning("Por favor ingresa tu clave de API de OpenAI para continuar")
+    st.warning("Por favor ingresa tu clave de API para continuar.")
 
-# PDF uploader
-pdf = st.file_uploader("Carga el archivo PDF", type="pdf")
+# --- SUBIDA DE PDF ---
+st.subheader("📤 Cargar documento PDF")
+pdf = st.file_uploader("Selecciona un archivo PDF", type=["pdf"])
 
-# Process the PDF if uploaded
+# --- PROCESAMIENTO ---
 if pdf is not None and ke:
     try:
-        # Extract text from PDF
-        pdf_reader = PdfReader(pdf)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
-        
-        st.info(f"Texto extraído: {len(text)} caracteres")
-        
-        # Split text into chunks
-        text_splitter = CharacterTextSplitter(
-            separator="\n",
-            chunk_size=500,
-            chunk_overlap=20,
-            length_function=len
-        )
-        chunks = text_splitter.split_text(text)
-        st.success(f"Documento dividido en {len(chunks)} fragmentos")
-        
-        # Create embeddings and knowledge base
-        embeddings = OpenAIEmbeddings()
-        knowledge_base = FAISS.from_texts(chunks, embeddings)
-        
-        # User question interface
-        st.subheader("Escribe qué quieres saber sobre el documento")
-        user_question = st.text_area(" ", placeholder="Escribe tu pregunta aquí...")
-        
-        # Process question when submitted
-        if user_question:
-            docs = knowledge_base.similarity_search(user_question)
-            
-            # Use a current model instead of deprecated text-davinci-003
-            # Options: "gpt-3.5-turbo-instruct" or "gpt-4-turbo-preview" depending on your API access
-            llm = OpenAI(temperature=0, model_name="gpt-4o")
-            
-            # Load QA chain
-            chain = load_qa_chain(llm, chain_type="stuff")
-            
-            # Run the chain
-            response = chain.run(input_documents=docs, question=user_question)
-            
-            # Display the response
-            st.markdown("### Respuesta:")
-            st.markdown(response)
-                
+        with st.spinner("📖 Extrayendo texto del PDF..."):
+            pdf_reader = PdfReader(pdf)
+            text = "".join([page.extract_text() or "" for page in pdf_reader.pages])
+
+        if not text.strip():
+            st.error("No se pudo extraer texto del PDF. Asegúrate de que no esté escaneado como imagen.")
+        else:
+            st.success(f"✅ Texto extraído correctamente ({len(text)} caracteres)")
+
+            # Dividir en fragmentos
+            with st.spinner("🔍 Dividiendo el documento en fragmentos..."):
+                text_splitter = CharacterTextSplitter(
+                    separator="\n",
+                    chunk_size=500,
+                    chunk_overlap=50,
+                    length_function=len
+                )
+                chunks = text_splitter.split_text(text)
+            st.info(f"📑 Documento dividido en {len(chunks)} fragmentos para su análisis.")
+
+            # Crear embeddings
+            with st.spinner("🧠 Creando base de conocimiento..."):
+                embeddings = OpenAIEmbeddings()
+                knowledge_base = FAISS.from_texts(chunks, embeddings)
+
+            # --- INTERFAZ DE PREGUNTAS ---
+            st.divider()
+            st.subheader("💬 Haz una pregunta sobre el documento")
+            user_question = st.text_area("Escribe tu pregunta aquí:")
+
+            if user_question:
+                with st.spinner("🤔 Buscando la mejor respuesta..."):
+                    docs = knowledge_base.similarity_search(user_question)
+                    llm = OpenAI(temperature=0, model_name="gpt-4o")
+                    chain = load_qa_chain(llm, chain_type="stuff")
+                    response = chain.run(input_documents=docs, question=user_question)
+
+                st.markdown("### 🧾 Respuesta:")
+                st.success(response)
+
+                # Mostrar contexto opcional
+                with st.expander("📚 Ver fragmentos de contexto utilizados"):
+                    for i, doc in enumerate(docs[:3]):
+                        st.markdown(f"**Fragmento {i+1}:**")
+                        st.write(doc.page_content)
+
     except Exception as e:
-        st.error(f"Error al procesar el PDF: {str(e)}")
-        # Add detailed error for debugging
-        import traceback
-        st.error(traceback.format_exc())
+        st.error("🚨 Ocurrió un error al procesar el PDF.")
+        st.code(traceback.format_exc())
 elif pdf is not None and not ke:
-    st.warning("Por favor ingresa tu clave de API de OpenAI para continuar")
+    st.warning("⚠️ Ingresa tu clave de API antes de analizar el PDF.")
 else:
-    st.info("Por favor carga un archivo PDF para comenzar")
+    st.info("💡 Sube un archivo PDF para comenzar el análisis.")
